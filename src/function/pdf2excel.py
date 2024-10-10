@@ -1,291 +1,391 @@
-"""demo read pdf
-"""
-
-import os
+import re
 import sys
-from typing import List, Optional
-from copy import deepcopy
+from typing import List
 
-from typing import Tuple
-
-ROOT_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-print(f"ROOT_PATH:{ROOT_PATH}")
-sys.path.append(ROOT_PATH)
-
-import json
-
-import numpy as np
 import pandas as pd
-from pandas import DataFrame
 import pymupdf
-from pymupdf import Page, Rect, Document
-from pymupdf.table import Table
+
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-from configs import ORG_PDF_PATH, BOOL_MERGE_HEAD_COL, BOOL_MERGE_HEAD_ROW
 
-
-def get_table(doc: Document) -> Tuple[List[Table], List[DataFrame]]:
-    """get target table in doc
+def get_order_number_single_page(page, order_number_table) -> str:
+    """get order number in page
 
     Args:
-        doc (Document): doc object
+        order_number_table (_type_): _description_
 
     Returns:
-        List[Table]: target table list
+        str: _description_
     """
-    table_list = []
-    table_df_list = []
-    for page in doc:
-        next_annot = page.first_annot
-        while next_annot:
-            new_next_annot = page.delete_annot(next_annot)
-            next_annot = new_next_annot
 
-        page_width = page.rect[2]
-        table_width_percent_threshold = 0.8
-        tables = page.find_tables()
-        print("get tables")
-
-        for table in tables.tables:
-            table.width = abs(table.bbox[0] - table.bbox[2])
-
-            if table.width > table_width_percent_threshold * page_width:
-                print("find target table")
-                table_df = table.to_pandas()
-                table_list.append(table)
-                table_df_list.append(table_df)
-
-            # for cell in table.cells:
-            #     table.page.draw_rect(cell, color=(1, 0, 0))
-
-    # for table in table_list:
-    #     table.page.draw_rect(table.bbox, color=(0, 1, 0))
-
-    return table_list, table_df_list
+    # row = order_number_table.rows[0]
+    # cell_order_number = row.cells[1]
+    # order_number = page.get_text(option="text", clip=cell_order_number)
+    # print(f"order num:{order_number}")
+    order_number = get_cell_content_in_table(
+        page=page, table=order_number_table, num_row=0, num_cell=1
+    )
+    # print(f"order num:{order_number}")
+    return order_number
 
 
-def change_df2target(
-    table_df: DataFrame, order_number="", style_number="", order_type=""
-) -> DataFrame:
-    """Convert the original tabular data in PDF file to target format of tabular data
+def get_cell_content_in_table(page, table, num_row, num_cell) -> str:
+    row = table.rows[num_row]
+    cell = row.cells[num_cell]
+    content = page.get_text(option="text", clip=cell).strip()
+    return content
+
+
+def get_table_pos(table) -> (float, float):
+    table_up_y = table.bbox[1]
+    table_bo_y = table.bbox[3]
+    return table_up_y, table_bo_y
+
+
+def get_style_pos_y_info_list(page, tables, page_height) -> List[dict]:
+    """get pos of styles in single page
 
     Args:
-        table_df (DataFrame): original tabular data
+        page (_type_): _description_
+        tables (_type_): _description_
 
     Returns:
-        DataFrame: target format of tabular data
+        List[dict]: _description_
+        [
+            {
+                "line_bot_y": -1,
+                "comp_up_y": -1,
+                "comp_bot_y": -1,
+                "hts_up_y": -1,
+                "hts_bot_y": -1,
+                "end_style_y": -1,
+            },
+            ...
+        ]
     """
 
-    table_json = json.loads(table_df.to_json(orient="records"))
-    print("get doc")
+    # order_number = get_order_number_single_page(page=page, order_number_table=tables[0])
+    mid_pos_info_list = []
+    mid_pos_info = {
+        "line_bot_y": -1,
+        "comp_up_y": -1,
+        "comp_bot_y": -1,
+        "hts_up_y": -1,
+        "hts_bot_y": -1,
+        "end_style_y": -1,
+    }
+    num_table = 0
+    for table in tables:
+        num_table += 1
+    for table_idx, table in enumerate(tables):
+        content = get_cell_content_in_table(
+            page=page, table=table, num_row=0, num_cell=0
+        )
 
-    new_table_json = []
-    for table_json_idx, tmp_table_json in enumerate(table_json):
-        if table_json_idx % 3 == 0:
-            color_json = table_json[table_json_idx]
+        num_table_rows = len(table.rows)
 
-            if table_json_idx + 2 < len(table_json):
-                size_json = table_json[table_json_idx + 1]
-                qua_json = table_json[table_json_idx + 2]
-                size_qua_pair_json = {}
-                proportion_pair_json = {}
-                for key in size_json:
-                    if size_json[key] and qua_json[key] != "Quantity":
-                        tmp_size = size_json[key]
-                        tmp_qua = qua_json[key]
-                        print(f'color_json["Qty"]:{color_json["Qty"]}')
-                        proportion_pair_json[tmp_size] = int(tmp_qua)
-                        if int(color_json["Qty"]) == 0:
-                            size_qua_pair_json[tmp_size] = int(tmp_qua)
-
-                        else:
-                            size_qua_pair_json[tmp_size] = int(tmp_qua) * int(
-                                color_json["Qty"]
-                            )
-                        print(
-                            f"size_qua_pair_json[tmp_size]:{size_qua_pair_json[tmp_size]}"
-                        )
-
-                tmp_table_json.update(size_qua_pair_json)
-                if tmp_table_json["Pack/Loose"] == "Pack":
-                    proportion_str = ":".join(
-                        str(val) for val in proportion_pair_json.values()
-                    )
-                    # proportion_list = []
-                    # for val in proportion_pair_json.values():
-                    #     proportion_list
-                    num_per_pack = sum(proportion_pair_json.values())
-
-                    if num_per_pack != int(tmp_table_json["Pack size"]):
-                        tmp_table_json["备注"] = (
-                            f"配比{proportion_str}/ {tmp_table_json['Pack size']}件(注意：数量不一致)"
-                        )
-                    else:
-                        tmp_table_json["备注"] = (
-                            f"配比{proportion_str}/ {num_per_pack}件"
-                        )
-                else:
-                    tmp_table_json["备注"] = "可溢2%"
-                new_table_json.append(tmp_table_json)
+        # print(f"content:{content}")
+        if "Order Number" in content and num_table_rows == 1:
+            # first table:
+            # order number
+            continue
+        elif table_idx == num_table - 1:
+            # last table:
+            # Total Order or HTS
+            if "Total Order:" in content:
+                # print("end")
+                # mid_pos_info["hts_up_y"], mid_pos_info["hts_bot_y"] = get_table_pos(
+                #     table=table
+                # )
+                mid_pos_info["end_style_y"], _ = get_table_pos(table=table)
+                mid_pos_info_list.append(mid_pos_info)
+                break
+            elif "HTS" in content:
+                mid_pos_info["hts_up_y"], mid_pos_info["hts_bot_y"] = get_table_pos(
+                    table=table
+                )
+                mid_pos_info["end_style_y"] = page_height
+                mid_pos_info_list.append(mid_pos_info)
+                mid_pos_info = {
+                    "line_bot_y": -1,
+                    "comp_up_y": -1,
+                    "comp_bot_y": -1,
+                    "hts_up_y": -1,
+                    "hts_bot_y": -1,
+                    "end_style_y": -1,
+                }
+            # manage the previous info
         else:
-            pass
+            # mid table:
+            # Line, Composition, HTS
+            # get first cell in first row of the table
 
-    df = pd.DataFrame(new_table_json)
+            if "Line" in content or "Order Number" in content and num_table_rows == 2:
+                if mid_pos_info["line_bot_y"] == -1:
+                    # first style info
+                    pass
+                else:
+                    # manage the previous info
+                    mid_pos_info["end_style_y"], _ = get_table_pos(table=table)
+                    # print(f"mid_pos_info:{mid_pos_info}")
+                    mid_pos_info_list.append(mid_pos_info)
+                    mid_pos_info = {
+                        "line_bot_y": -1,
+                        "comp_up_y": -1,
+                        "comp_bot_y": -1,
+                        "hts_up_y": -1,
+                        "hts_bot_y": -1,
+                        "end_style_y": -1,
+                    }
 
-    df = df.drop("Pack code", axis=1)
-    df = df.drop("Col2", axis=1)
-    df = df.drop("Barcode/SKU", axis=1)
-    df = df.drop("Col4", axis=1)
-    df = df.drop("Pack size", axis=1)
-    df = df.drop("Unit price", axis=1)
-    df = df.drop("Total (USD)", axis=1)
-    # df = df.drop("Qty", axis=1)
-    # df.fillna(0, inplace=True)
-    # 将值为0的元素替换为NaN
-    df["Qty"] = df["Qty"].astype(int)
-    df.replace(0, np.nan, inplace=True)
-    df = df.rename(
-        columns={
-            "Colour": "颜色色号",
-            "Pack/Loose": "包装方式",
-            "Total": "合计",
-            "Qty": "包数",
-        }
+                    # pass
+                _, mid_pos_info["line_bot_y"] = get_table_pos(table=table)
+            elif "Composition" in content:
+                mid_pos_info["comp_up_y"], mid_pos_info["comp_bot_y"] = get_table_pos(
+                    table=table
+                )
+            elif "HTS" in content:
+                mid_pos_info["hts_up_y"], mid_pos_info["hts_bot_y"] = get_table_pos(
+                    table=table
+                )
+
+            else:
+                print(f"格式解析出现意外:{content}")
+        # print(f"mid_pos_info:{mid_pos_info}")
+
+    # print(f"mid_pos_info_list:{mid_pos_info_list}")
+    return mid_pos_info_list
+
+
+def get_row_content(page, up_y, down_y, page_width) -> List[str]:
+    content = page.get_text(
+        option="dict",
+        clip=(
+            0,
+            up_y,
+            page_width,
+            down_y,
+        ),
     )
 
+    # print(f"content:{content}")
+    span_list = []
+
+    for block in content["blocks"]:
+        if "lines" in block:
+            for line in block["lines"]:
+
+                for span in line["spans"]:
+                    span_content = span["text"].strip()
+                    # print(f"span_content:{span_content}")
+                    span_list.append(span_content)
+    return span_list
+
+
+def get_row_content_block(page, up_y, down_y, page_width) -> List[str]:
+    content = page.get_text(
+        option="dict",
+        clip=(
+            0,
+            up_y,
+            page_width,
+            down_y,
+        ),
+    )
+
+    # print(f"content:{content}")
+    block_list = []
+
+    for block in content["blocks"]:
+        tmp_block_list = []
+        if "lines" in block:
+            for line in block["lines"]:
+
+                for span in line["spans"]:
+                    span_content = span["text"].strip()
+                    # print(f"span_content:{span_content}")
+                    tmp_block_list.append(span_content)
+
+        tmp_block_content = " ".join(tmp_block_list)
+        block_list.append(tmp_block_content)
+    return block_list
+
+
+def get_style_content(mid_pos_info_list, order_number, page, page_width) -> List[dict]:
+
+    style_info_list = []
+    for tmp_mid_pos_info in mid_pos_info_list:
+        tmp_style_info = {
+            "款号": "",
+            "PO": order_number,
+            "色号": "",
+            "尺寸": [],
+            "总数": -1,
+            "交期": [],
+            "价格": "",
+        }
+
+        span_list = get_row_content(
+            page=page,
+            up_y=tmp_mid_pos_info["line_bot_y"],
+            down_y=tmp_mid_pos_info["comp_up_y"],
+            page_width=page_width,
+        )
+
+        # print(f"span_list:{span_list}")
+        tmp_style_info["款号"] = span_list[1]
+        tmp_style_info["色号"] = span_list[2]
+        tmp_style_info["交期"] = str([span_list[-2], span_list[-1]])
+
+        span_list = get_row_content(
+            page=page,
+            up_y=tmp_mid_pos_info["comp_bot_y"],
+            down_y=tmp_mid_pos_info["hts_up_y"],
+            page_width=page_width,
+        )
+        # print(f"span_list:{span_list}")
+        tmp_style_info["价格"] = span_list[0]
+
+        block_list = get_row_content_block(
+            page=page,
+            up_y=tmp_mid_pos_info["hts_bot_y"],
+            down_y=tmp_mid_pos_info["end_style_y"],
+            page_width=page_width,
+        )
+
+        size_info_list = []
+        bool_start = False
+        for tmp_block_content in block_list:
+            if "Total" in tmp_block_content:
+                bool_start = not bool_start
+            tmp_size_info = tmp_block_content.split(" ")
+            if bool_start is True:
+                size_info_list.append(tmp_size_info)
+            if len(size_info_list) and bool_start is False:
+                size_info_list.append(tmp_size_info)
+                break
+
+        # print(f"size_info_list:{size_info_list}")
+
+        tmp_style_info["总数"] = size_info_list[-1][1]
+        tmp_style_info["尺寸"] = size_info_list
+
+        len_first_row = len(size_info_list[0])
+        # print(f"len_first_row:{len_first_row}")
+
+        first_row = size_info_list[0]
+        for row_idx, row in enumerate(size_info_list):
+            # print(f"row_idx:{row_idx} row:{row}")
+            if row_idx == 0:
+                continue
+            elif row_idx == len(size_info_list) - 1:
+                continue
+            if len(row) > len_first_row:
+                # include 内裤长
+                new_size = row[0]
+                tmp_style_info["色号"] += f"--内长{new_size}英寸"
+                start_pos = 2
+                # size = [fr + f"/{new_size}" for fr in first_row[1:]]
+                size = first_row[1:]
+            else:
+                start_pos = 1
+                size = first_row[1:]
+            for tmp_size_idx, tmp_size in enumerate(size):
+                tmp_style_info[tmp_size] = row[start_pos + tmp_size_idx]
+            # tmp_style_info[""]
+
+        # print(f"tmp_style_info:{tmp_style_info}")
+        style_info_list.append(tmp_style_info)
+        # get style code and others
+    return style_info_list
+
+
+def clean_annot_in_doc(doc):
+    # remove annotation information from pdf files
+    # to avoid the impact of annotation information on form extraction
+    for page in doc:
+        for annot in page.annots():
+            page.delete_annot(annot=annot)
+
+
+def func_pdf2excel(pdf_content):
+    # convert reading local file into reading data stream,
+    # avoiding the need to save the file locally
+    doc = pymupdf.open(stream=pdf_content)
+    clean_annot_in_doc(doc=doc)
+    # get PO
+    page = doc[0]
+    page_width = page.rect[2]
+    tables = page.find_tables()
+    order_number = get_order_number_single_page(page=page, order_number_table=tables[0])
+
+    # get target country
+    _, up_target_country = get_table_pos(table=tables[0])
+    down_target_country, _ = get_table_pos(table=tables[1])
+
+    content = page.get_text(
+        option="text", clip=(0, up_target_country, page_width, down_target_country)
+    )
+
+    print(f"content:{content}")
+
+    pattern = r"\((.*?)\)"
+
+    match_obj = re.search(pattern, content)
+    target_country = ""
+    if match_obj:
+        target_country = match_obj.group(1)
+        print(f"target_country:{target_country}")
+    # sys.exit()
+    order_number += target_country
+    total_style_info_list = []
+    for page in doc:
+        # find struct by tables
+        # page = doc[0]
+        tables = page.find_tables()
+        num_table = 0
+        for table in tables:
+            num_table += 1
+        page_width = page.rect[2]
+        page_height = page.rect[3]
+
+        mid_pos_info_list = get_style_pos_y_info_list(
+            page=page, tables=tables, page_height=page_height
+        )
+        print(f"len mid_pos_info_list:{len(mid_pos_info_list)}")
+
+        style_info_list = get_style_content(
+            mid_pos_info_list=mid_pos_info_list,
+            order_number=order_number,
+            page=page,
+            page_width=page_width,
+        )
+        total_style_info_list.extend(style_info_list)
+
+    # translate json to excel file
+    df = pd.DataFrame(total_style_info_list)
+    print(f"df:{df}")
+    df = df.drop("尺寸", axis=1)
+    df["总数"] = df["总数"].astype(int)
+
     df = df.sort_index(axis=1)
-    # 对列进行排序 款号 颜色色号 PO号 订单形式 4 ... 18 合计 包装方式 备注 包数
-    front_list = ["款号", "颜色色号", "PO号", "订单形式"]
-    end_list = ["合计", "包装方式", "备注", "包数"]
+    front_list = ["款号", "PO", "色号"]
+    end_list = ["总数", "价格", "交期"]
     new_order = (
         front_list
         + [col for col in df.columns if col not in front_list + end_list]
         + end_list
     )
-
-    df["款号"] = style_number
-    df["PO号"] = order_number
-    df["订单形式"] = order_type
-
-    # new_order = ['颜色色号color'] + [col for col in df.columns if col != '颜色色号color']
-    print(f"new_order:{new_order}")
     exist_index = df.columns
-    print(f"exist_index:{exist_index}")
+    # print(f"exist_index:{exist_index}")
     for ordered_key in new_order:
         if ordered_key in exist_index:
             pass
         else:
             df[ordered_key] = pd.NA
     df = df[new_order]
-
     print(f"df:{df}")
-    df["合计"] = df["合计"].str.replace(",", "").astype(int)
-
-    df["包装方式"] = df["包装方式"].replace("Pack", "配比包装")
-    df["包装方式"] = df["包装方式"].replace("Loose", "散装走货")
-
-    return df
-
-
-def func_pdf2excel(pdf_content):
-
-    # # ORG_PDF_PATH = "D:/projects/pdf2excel_supplier_purchase/others/org_sample_file/2411082002 SDNZ-P0014217.pdf"
-    # ORG_PDF_PATH = "D:/projects/pdf2excel_supplier_purchase/others/org_sample_file/2411082002 SDAU-P0014217.pdf"
-    # # read pdf file
-    # doc = pymupdf.open(ORG_PDF_PATH)
-
-    # convert reading local file into reading data stream,
-    # avoiding the need to save the file locally
-    doc = pymupdf.open(stream=pdf_content)
-
-    # remove annotation information from pdf files
-    # to avoid the impact of annotation information on form extraction
-    for page in doc:
-
-        for annot in page.annots():
-            page.delete_annot(annot=annot)
-
-    # identify text in PDF file
-
-    # identify text in PDF file of page 1
-    page = doc[0]
-
-    page_content = page.get_text(option="dict")
-
-    print("get page content")
-    content_list = []
-    for block in page_content["blocks"]:
-        tmp_block_content_list = []
-        # tmp_block_content = ""
-        # page.draw_rect(pymupdf.Rect(block["bbox"]))
-        for line in block["lines"]:
-            # page.draw_rect(pymupdf.Rect(line["bbox"]))
-            for span in line["spans"]:
-                # page.draw_rect(pymupdf.Rect(span["bbox"]))
-                # tmp_block_content += span["text"]
-                tmp_block_content_list.append(span["text"])
-                # pass
-        tmp_block_content = " ".join(tmp_block_content_list)
-        print(f"tmp_block_content:{tmp_block_content}")
-        # while "  " in tmp_block_content:
-        #     tmp_block_content.replace("  ", " ")
-        while True:
-            if "  " in tmp_block_content:
-                tmp_block_content = tmp_block_content.replace("  ", " ")
-            else:
-                break
-        content_list.append(tmp_block_content)
-
-    order_number = ""
-    style_number = ""
-    order_type = ""
-    for tmp_content in content_list:
-        if "Order number:" in tmp_content:
-            order_number = tmp_content.split(" ")[-1]
-        elif "Style number:" in tmp_content:
-            style_number = tmp_content.split(" ")[-1]
-        elif "SUPPLIER PURCHASE ORDER" in tmp_content:
-            order_type = tmp_content.split("SUPPLIER PURCHASE ORDER")[0]
-
-    print(
-        f"order_number:{order_number}\nstyle_number:{style_number}\norder_type:{order_type}"
-    )
-    # doc.save("a.pdf")
-
-    # get table in pdf file
-    table_list, table_df_list = get_table(doc=doc)
-
-    # out_path = "a.pdf"
-    # doc.save(out_path)
-    # get table info
-
-    if len(table_df_list) == 1:
-        table_df = table_df_list[0]
-    else:
-        col = []
-        table_df = None
-        for tmp_table_id, tmp_table_df in enumerate(table_df_list):
-            if tmp_table_id == 0:
-                col = tmp_table_df.columns
-                table_df = tmp_table_df
-            else:
-                fake_head = tmp_table_df.columns.to_list()
-                new_fake_head = []
-                for tmp_fake_head in fake_head:
-                    if "-" in tmp_fake_head:
-                        tmp_fake_head = tmp_fake_head.split("-")[-1]
-                    elif "Col" in tmp_fake_head:
-                        tmp_fake_head = pd.NA
-                    new_fake_head.append(tmp_fake_head)
-                fake_head_df = pd.DataFrame(new_fake_head, index=col)
-                table_df = pd.concat([table_df, fake_head_df.T], ignore_index=True)
-                tmp_table_df_reset = tmp_table_df.reset_index(drop=True)
-                tmp_table_df_reset.columns = col
-                table_df = pd.concat([table_df, tmp_table_df_reset], ignore_index=True)
-
-    df = change_df2target(table_df, order_number, style_number, order_type)
 
     # df.to_excel("c.xlsx", index=False)
     # 创建一个Workbook对象
@@ -305,106 +405,81 @@ def func_pdf2excel(pdf_content):
 
 if __name__ == "__main__":
 
-    ORG_PDF_PATH = "D:/projects/pdf2excel_supplier_purchase/others/org_sample_file/2411082002 SDNZ-P0014217.pdf"
-    # ORG_PDF_PATH = "D:/projects/pdf2excel_supplier_purchase/others/org_sample_file/2411082002 SDAU-P0014217.pdf"
-    # ORG_PDF_PATH = "D:/projects/pdf2excel_supplier_purchase/others/org_sample_file/2411082002 SDAU-P0014217_annot.pdf"
-    # read pdf file
+    # ORG_PDF_PATH = "D:/projects/pdf2excel/pdf2excel_GUESS/others/sample_file/Order_EU_03_MA01-2024-02483_202406060132090609.pdf"
+    ORG_PDF_PATH = "D:/projects/pdf2excel/pdf2excel_GUESS/others/sample_file/Order_EU_03_AU01-2024-00882_202406060143288595.pdf"
     doc = pymupdf.open(ORG_PDF_PATH)
 
-    # remove annotation information from pdf files
-    # to avoid the impact of annotation information on form extraction
-    for page in doc:
-        for annot in page.annots():
-            page.delete_annot(annot=annot)
-
-    # identify text in PDF file of page 1
+    # get PO
     page = doc[0]
+    page_width = page.rect[2]
+    tables = page.find_tables()
+    order_number = get_order_number_single_page(page=page, order_number_table=tables[0])
 
-    page_content = page.get_text(option="dict")
+    # get target country
+    _, up_target_country = get_table_pos(table=tables[0])
+    down_target_country, _ = get_table_pos(table=tables[1])
 
-    print("get page content")
-    content_list = []
-    for block in page_content["blocks"]:
-        tmp_block_content_list = []
-        # tmp_block_content = ""
-        # page.draw_rect(pymupdf.Rect(block["bbox"]))
-        for line in block["lines"]:
-            # page.draw_rect(pymupdf.Rect(line["bbox"]))
-            for span in line["spans"]:
-                # page.draw_rect(pymupdf.Rect(span["bbox"]))
-                # tmp_block_content += span["text"]
-                tmp_block_content_list.append(span["text"])
-                # pass
-        tmp_block_content = " ".join(tmp_block_content_list)
-        print(f"tmp_block_content:{tmp_block_content}")
-        # while "  " in tmp_block_content:
-        #     tmp_block_content.replace("  ", " ")
-        while True:
-            if "  " in tmp_block_content:
-                tmp_block_content = tmp_block_content.replace("  ", " ")
-            else:
-                break
-        content_list.append(tmp_block_content)
-
-    order_number = ""
-    style_number = ""
-    order_type = ""
-    for tmp_content in content_list:
-        if "Order number:" in tmp_content:
-            order_number = tmp_content.split(" ")[-1]
-        elif "Style number:" in tmp_content:
-            style_number = tmp_content.split(" ")[-1]
-        elif "SUPPLIER PURCHASE ORDER" in tmp_content:
-            order_type = tmp_content.split("SUPPLIER PURCHASE ORDER")[0]
-
-    print(
-        f"order_number:{order_number}\nstyle_number:{style_number}\norder_type:{order_type}"
+    content = page.get_text(
+        option="text", clip=(0, up_target_country, page_width, down_target_country)
     )
 
+    print(f"content:{content}")
+
+    pattern = r"\((.*?)\)"
+
+    match_obj = re.search(pattern, content)
+    target_country = ""
+    if match_obj:
+        target_country = match_obj.group(1)
+        print(f"target_country:{target_country}")
+    # sys.exit()
+    order_number += target_country
+    total_style_info_list = []
     for page in doc:
+        # find struct by tables
+        # page = doc[0]
+        tables = page.find_tables()
+        num_table = 0
+        for table in tables:
+            num_table += 1
+        page_width = page.rect[2]
+        page_height = page.rect[3]
 
-        page_content = page.get_text(option="dict")
+        mid_pos_info_list = get_style_pos_y_info_list(
+            page=page, tables=tables, page_height=page_height
+        )
+        print(f"len mid_pos_info_list:{len(mid_pos_info_list)}")
 
-        print("get page content")
+        style_info_list = get_style_content(
+            mid_pos_info_list=mid_pos_info_list,
+            order_number=order_number,
+            page=page,
+            page_width=page_width,
+        )
+        total_style_info_list.extend(style_info_list)
 
-        for block in page_content["blocks"]:
-            # page.draw_rect(pymupdf.Rect(block["bbox"]))
-            for line in block["lines"]:
-                # page.draw_rect(pymupdf.Rect(line["bbox"]))
-                for span in line["spans"]:
-                    # page.draw_rect(pymupdf.Rect(span["bbox"]))
-                    pass
-    out_path = "block.pdf"
-    doc.save(out_path)
+    # translate json to excel file
+    df = pd.DataFrame(total_style_info_list)
 
-    table_list, table_df_list = get_table(doc=doc)
+    df = df.drop("尺寸", axis=1)
+    df["总数"] = df["总数"].astype(int)
 
-    # get table info
-
-    if len(table_df_list) == 1:
-        table_df = table_df_list[0]
-    else:
-        col = []
-        table_df = None
-        for tmp_table_id, tmp_table_df in enumerate(table_df_list):
-            if tmp_table_id == 0:
-                col = tmp_table_df.columns
-                table_df = tmp_table_df
-            else:
-                fake_head = tmp_table_df.columns.to_list()
-                new_fake_head = []
-                for tmp_fake_head in fake_head:
-                    if "-" in tmp_fake_head:
-                        tmp_fake_head = tmp_fake_head.split("-")[-1]
-                    elif "Col" in tmp_fake_head:
-                        tmp_fake_head = pd.NA
-                    new_fake_head.append(tmp_fake_head)
-                fake_head_df = pd.DataFrame(new_fake_head, index=col)
-                table_df = pd.concat([table_df, fake_head_df.T], ignore_index=True)
-                tmp_table_df_reset = tmp_table_df.reset_index(drop=True)
-                tmp_table_df_reset.columns = col
-                table_df = pd.concat([table_df, tmp_table_df_reset], ignore_index=True)
-
-    df = change_df2target(table_df, order_number, style_number, order_type)
+    df = df.sort_index(axis=1)
+    front_list = ["款号", "PO", "色号"]
+    end_list = ["总数", "价格", "交期"]
+    new_order = (
+        front_list
+        + [col for col in df.columns if col not in front_list + end_list]
+        + end_list
+    )
+    exist_index = df.columns
+    # print(f"exist_index:{exist_index}")
+    for ordered_key in new_order:
+        if ordered_key in exist_index:
+            pass
+        else:
+            df[ordered_key] = pd.NA
+    df = df[new_order]
+    print(f"df:{df}")
 
     df.to_excel("c.xlsx", index=False)
