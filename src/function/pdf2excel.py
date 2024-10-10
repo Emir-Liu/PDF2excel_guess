@@ -212,7 +212,9 @@ def get_row_content_block(page, up_y, down_y, page_width) -> List[str]:
     return block_list
 
 
-def get_style_content(mid_pos_info_list, order_number, page, page_width) -> List[dict]:
+def get_style_content(
+    mid_pos_info_list, order_number, page, page_width, size_columns_set
+) -> List[dict]:
 
     style_info_list = []
     for tmp_mid_pos_info in mid_pos_info_list:
@@ -260,16 +262,29 @@ def get_style_content(mid_pos_info_list, order_number, page, page_width) -> List
             if "Total" in tmp_block_content:
                 bool_start = not bool_start
             tmp_size_info = tmp_block_content.split(" ")
+            # tmp_size_info_int = [int(val) for val in tmp_size_info]
+            tmp_size_info_int = []
+
+            for val in tmp_size_info:
+                try:
+                    tmp_val = int(val)
+                except Exception as e:
+                    tmp_val = val
+                tmp_size_info_int.append(tmp_val)
             if bool_start is True:
-                size_info_list.append(tmp_size_info)
+                size_info_list.append(tmp_size_info_int)
             if len(size_info_list) and bool_start is False:
-                size_info_list.append(tmp_size_info)
+                size_info_list.append(tmp_size_info_int)
                 break
 
         # print(f"size_info_list:{size_info_list}")
 
         tmp_style_info["总数"] = size_info_list[-1][1]
         tmp_style_info["尺寸"] = size_info_list
+
+        tmp_size_columns = size_info_list[0][1:]
+        for tmp_tmp_size_columns in tmp_size_columns:
+            size_columns_set.add(tmp_tmp_size_columns)
 
         len_first_row = len(size_info_list[0])
         # print(f"len_first_row:{len_first_row}")
@@ -298,7 +313,7 @@ def get_style_content(mid_pos_info_list, order_number, page, page_width) -> List
         # print(f"tmp_style_info:{tmp_style_info}")
         style_info_list.append(tmp_style_info)
         # get style code and others
-    return style_info_list
+    return style_info_list, size_columns_set
 
 
 def clean_annot_in_doc(doc):
@@ -309,83 +324,69 @@ def clean_annot_in_doc(doc):
             page.delete_annot(annot=annot)
 
 
-def func_pdf2excel(pdf_content):
-    # convert reading local file into reading data stream,
-    # avoiding the need to save the file locally
-    doc = pymupdf.open(stream=pdf_content)
-    clean_annot_in_doc(doc=doc)
-    # get PO
-    page = doc[0]
-    page_width = page.rect[2]
-    tables = page.find_tables()
-    order_number = get_order_number_single_page(page=page, order_number_table=tables[0])
+def sort_size_list(size_set):
+    size_to_number = {
+        "XXXS": 1,
+        "XXS": 2,
+        "XS": 3,
+        "S": 4,
+        "M": 5,
+        "L": 6,
+        "XL": 7,
+        "XXL": 8,
+        "XXXL": 9,
+    }
 
-    # get target country
-    _, up_target_country = get_table_pos(table=tables[0])
-    down_target_country, _ = get_table_pos(table=tables[1])
-
-    content = page.get_text(
-        option="text", clip=(0, up_target_country, page_width, down_target_country)
-    )
-
-    print(f"content:{content}")
-
-    pattern = r"\((.*?)\)"
-
-    match_obj = re.search(pattern, content)
-    target_country = ""
-    if match_obj:
-        target_country = match_obj.group(1)
-        print(f"target_country:{target_country}")
-    # sys.exit()
-    order_number += target_country
-    total_style_info_list = []
-    for page in doc:
-        # find struct by tables
-        # page = doc[0]
-        tables = page.find_tables()
-        num_table = 0
-        for table in tables:
-            num_table += 1
-        page_width = page.rect[2]
-        page_height = page.rect[3]
-
-        mid_pos_info_list = get_style_pos_y_info_list(
-            page=page, tables=tables, page_height=page_height
+    def sort_sizes_str(sizes):
+        sorted_sizes = sorted(
+            sizes, key=lambda size: size_to_number.get(size, 0), reverse=False
         )
-        print(f"len mid_pos_info_list:{len(mid_pos_info_list)}")
+        return sorted_sizes
 
-        style_info_list = get_style_content(
-            mid_pos_info_list=mid_pos_info_list,
-            order_number=order_number,
-            page=page,
-            page_width=page_width,
-        )
-        total_style_info_list.extend(style_info_list)
+    bool_all_number = True
+    size_list = []
+    for tmp_size_set in size_set:
+        try:
+            # tmp_size_set = int(tmp_size_set)
+            size_list.append(int(tmp_size_set))
+        except Exception as e:
+            size_list.append(tmp_size_set)
+            bool_all_number = False
+
+    # for tmp_size in size_list:
+    #     print(f"tmp_size:{tmp_size}")
+    # print(f"bool_all_number:{bool_all_number}")
+    if bool_all_number is False:
+        sorted_size = sort_sizes_str(size_list)
+    else:
+        sorted_size = sorted(size_list, reverse=False)
+
+    return sorted_size
+
+
+def trans_json2ws(total_style_info_list, size_columns_set):
 
     # translate json to excel file
     df = pd.DataFrame(total_style_info_list)
-    print(f"df:{df}")
+    # print(f"df:{df}")
     df = df.drop("尺寸", axis=1)
     df["总数"] = df["总数"].astype(int)
 
-    df = df.sort_index(axis=1)
+    # df = df.sort_index(axis=1)
     front_list = ["款号", "PO", "色号"]
     end_list = ["总数", "价格", "交期"]
-    new_order = (
-        front_list
-        + [col for col in df.columns if col not in front_list + end_list]
-        + end_list
-    )
+
+    size_list = sort_size_list(size_set=size_columns_set)
+    new_order = front_list + size_list + end_list
     exist_index = df.columns
-    # print(f"exist_index:{exist_index}")
+
     for ordered_key in new_order:
         if ordered_key in exist_index:
             pass
         else:
             df[ordered_key] = pd.NA
     df = df[new_order]
-    print(f"df:{df}")
+    # print(f"df:{df}")
 
     # df.to_excel("c.xlsx", index=False)
     # 创建一个Workbook对象
@@ -399,14 +400,136 @@ def func_pdf2excel(pdf_content):
         print(f"r:{r}")
         ws.append(r)
 
-    # wb.save("back.xlsx")
     return wb
 
 
-if __name__ == "__main__":
+def func_pdf2excel(pdf_content, size_columns_set):
+    # convert reading local file into reading data stream,
+    # avoiding the need to save the file locally
 
+    # Distinguish whether data is a stream or a path string
+    if isinstance(pdf_content, str):
+        doc = pymupdf.open(pdf_content)
+    else:
+        doc = pymupdf.open(stream=pdf_content)
+
+    clean_annot_in_doc(doc=doc)
+
+    # get PO
+    page = doc[0]
+    page_width = page.rect[2]
+    tables = page.find_tables()
+    order_number = get_order_number_single_page(page=page, order_number_table=tables[0])
+
+    # get CLL
+    down_cll, up_target_country = get_table_pos(table=tables[0])
+
+    cll = ""
+    tmp_cll_contents = page.get_text(option="dict", clip=(0, 0, page_width, down_cll))
+
+    for block in tmp_cll_contents["blocks"]:
+        tmp_block_content = ""
+        if "lines" in block:
+            for line in block["lines"]:
+                for span in line["spans"]:
+                    tmp_block_content += span["text"].strip()
+        if len(tmp_block_content) == 3:
+            cll = tmp_block_content
+            break
+
+    # get target country
+    down_target_country, _ = get_table_pos(table=tables[1])
+
+    content = page.get_text(
+        option="dict", clip=(0, up_target_country, page_width, down_target_country)
+    )
+
+    target_block_json = {"left": 0, "bot": 0, "content": ""}
+    for block in content["blocks"]:
+        # print(f"block:{block}")
+        tmp_block_list = []
+        if "lines" in block:
+            for line in block["lines"]:
+                for span in line["spans"]:
+                    tmp_block_list.append(span["text"].strip())
+
+        # block_info_json["content"] = " ".join(tmp_block_list)
+        block_info_json = {
+            "left": block["bbox"][0],
+            "bot": block["bbox"][3],
+            "content": " ".join(tmp_block_list),
+        }
+
+        # print(f"block info json:{block_info_json}")
+
+        if block_info_json["left"] > page_width / 4:
+            continue
+        # tmp_block_content = ''
+        if block_info_json["bot"] < target_block_json["bot"]:
+            continue
+
+        if "Payment" in block_info_json["content"]:
+            break
+        target_block_json = block_info_json
+        print(f"new target_block_json:{target_block_json}")
+
+    if target_block_json["content"]:
+        target_block_json["content"] = target_block_json["content"].replace("(", " ")
+        target_block_json["content"] = target_block_json["content"].replace(")", " ")
+        target_country = target_block_json["content"].strip().split(" ")[-1]
+    else:
+        target_country = " "
+
+    # content = page.get_text(
+    #     option="text", clip=(0, up_target_country, page_width, down_target_country)
+    # )
+
+    # print(f"content:{content}")
+
+    # pattern = r"\((.*?)\)"
+
+    # match_obj = re.search(pattern, content)
+    # target_country = ""
+    # if match_obj:
+    #     target_country = match_obj.group(1)
+    #     print(f"target_country:{target_country}")
+
+    # sys.exit()
+    # order_number += target_country
+    order_number = f"{order_number.strip()}-{target_country.strip()}-{cll.strip()}"
+    total_style_info_list = []
+    # size_columns_set = set()
+    for page in doc:
+        # find struct by tables
+        # page = doc[0]
+        tables = page.find_tables()
+        num_table = 0
+        for table in tables:
+            num_table += 1
+        page_width = page.rect[2]
+        page_height = page.rect[3]
+
+        mid_pos_info_list = get_style_pos_y_info_list(
+            page=page, tables=tables, page_height=page_height
+        )
+        # print(f"len mid_pos_info_list:{len(mid_pos_info_list)}")
+
+        style_info_list, size_columns_set = get_style_content(
+            mid_pos_info_list=mid_pos_info_list,
+            order_number=order_number,
+            page=page,
+            page_width=page_width,
+            size_columns_set=size_columns_set,
+        )
+        total_style_info_list.extend(style_info_list)
+
+    # translate json to excel file
+    return total_style_info_list, size_columns_set
+
+
+if __name__ == "__main__":
     # ORG_PDF_PATH = "D:/projects/pdf2excel/pdf2excel_GUESS/others/sample_file/Order_EU_03_MA01-2024-02483_202406060132090609.pdf"
-    ORG_PDF_PATH = "D:/projects/pdf2excel/pdf2excel_GUESS/others/sample_file/Order_EU_03_AU01-2024-00882_202406060143288595.pdf"
+    ORG_PDF_PATH = "D:/projects/pdf2excel/pdf2excel_GUESS/others/sample_file/Order_EU_03_MA03-2024-03573_202409061447208210.pdf"
     doc = pymupdf.open(ORG_PDF_PATH)
 
     # get PO
@@ -423,7 +546,7 @@ if __name__ == "__main__":
         option="text", clip=(0, up_target_country, page_width, down_target_country)
     )
 
-    print(f"content:{content}")
+    # print(f"content:{content}")
 
     pattern = r"\((.*?)\)"
 
@@ -431,10 +554,11 @@ if __name__ == "__main__":
     target_country = ""
     if match_obj:
         target_country = match_obj.group(1)
-        print(f"target_country:{target_country}")
+        # print(f"target_country:{target_country}")
     # sys.exit()
     order_number += target_country
     total_style_info_list = []
+    size_columns_set = set()
     for page in doc:
         # find struct by tables
         # page = doc[0]
@@ -448,13 +572,14 @@ if __name__ == "__main__":
         mid_pos_info_list = get_style_pos_y_info_list(
             page=page, tables=tables, page_height=page_height
         )
-        print(f"len mid_pos_info_list:{len(mid_pos_info_list)}")
+        # print(f"len mid_pos_info_list:{len(mid_pos_info_list)}")
 
-        style_info_list = get_style_content(
+        style_info_list, size_columns_set = get_style_content(
             mid_pos_info_list=mid_pos_info_list,
             order_number=order_number,
             page=page,
             page_width=page_width,
+            size_columns_set=size_columns_set,
         )
         total_style_info_list.extend(style_info_list)
 
@@ -463,23 +588,38 @@ if __name__ == "__main__":
 
     df = df.drop("尺寸", axis=1)
     df["总数"] = df["总数"].astype(int)
-
-    df = df.sort_index(axis=1)
+    df["价格"] = df["价格"].astype(float)
+    # df = df.sort_index(axis=1)
     front_list = ["款号", "PO", "色号"]
     end_list = ["总数", "价格", "交期"]
-    new_order = (
-        front_list
-        + [col for col in df.columns if col not in front_list + end_list]
-        + end_list
-    )
+
+    new_columns = {}
+    for col in df.columns:
+        try:
+            # 尝试将列名转换为整数
+            new_columns[col] = int(col)
+            df[col] = df[col].astype(int)
+        except ValueError:
+            # 如果转换失败，保持原列名
+            new_columns[col] = col
+    # 更新DataFrame的列名
+    df.columns = [
+        new_columns[col] if isinstance(new_columns[col], int) else col
+        for col in df.columns
+    ]
+    size_list = sort_size_list(size_set=size_columns_set)
+    new_order = front_list + size_list + end_list
+
     exist_index = df.columns
+    # print(f"new_order:{new_order}")
     # print(f"exist_index:{exist_index}")
+
     for ordered_key in new_order:
         if ordered_key in exist_index:
             pass
         else:
             df[ordered_key] = pd.NA
     df = df[new_order]
-    print(f"df:{df}")
+    # print(f"df:{df}")
 
     df.to_excel("c.xlsx", index=False)

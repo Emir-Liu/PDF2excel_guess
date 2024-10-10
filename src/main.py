@@ -2,6 +2,8 @@ import os
 import sys
 import io
 from io import BytesIO
+from typing import List
+
 
 ROOT_PATH = os.path.dirname(os.path.abspath(__file__))
 # print(f"ROOT_PATH:{ROOT_PATH}")
@@ -15,7 +17,7 @@ import uvicorn
 import openpyxl
 
 from configs import TITLE, VERSION, IP
-from function.pdf2excel import func_pdf2excel
+from function.pdf2excel import func_pdf2excel, trans_json2ws
 
 app = FastAPI(title=TITLE, version=VERSION)
 app.add_middleware(
@@ -28,12 +30,22 @@ app.add_middleware(
 
 
 @app.post("/uploadpdf/")
-async def upload_pdf(file: UploadFile = File(...)):
-    contents = await file.read()
-    # file_name = file.filename
-    # new_file_name = file_name.replace(" ", "_")
-    bytes_io = io.BytesIO(contents)
-    excel_content = func_pdf2excel(pdf_content=bytes_io)
+async def upload_pdf(file: List[UploadFile] = File(...)):
+    total_style_info_list = []
+    size_columns_set = set()
+    for tmp_file in file:
+        contents = await tmp_file.read()
+        # file_name = file.filename
+        # new_file_name = file_name.replace(" ", "_")
+        bytes_io = io.BytesIO(contents)
+        part_style_info_list, size_columns_set = func_pdf2excel(
+            pdf_content=bytes_io, size_columns_set=size_columns_set
+        )
+        total_style_info_list.extend(part_style_info_list)
+
+    excel_content = trans_json2ws(
+        total_style_info_list, size_columns_set=size_columns_set
+    )
 
     # 将 Excel 文件保存到 BytesIO 对象中
     output = BytesIO()

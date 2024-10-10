@@ -4,7 +4,7 @@
   <br>
   
   <div>
-    <input type="file" v-on:change="onFileChange"/>
+    <input type="file" v-on:change="onFileChange" multiple/>
   </div>
 </template>
 
@@ -16,9 +16,12 @@
     const element = event.target as HTMLInputElement;
     console.log('element:',element)
     const formData = new FormData();
-    formData.append('file', element.files[0]);
+    for (let file of element.files) {
+      formData.append('file', file)
+    }
+    // formData.append('file', element.files);
     try {
-      const response = await axios.post('http://172.19.3.206:12309/uploadpdf/', formData, {
+      const response = await axios.post('http://172.22.0.240:12305/uploadpdf/', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         },
