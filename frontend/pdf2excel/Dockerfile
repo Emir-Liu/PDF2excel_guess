@@ -4,4 +4,4 @@ COPY ./dist/ /var/www/html
 
 COPY ./nginx.conf /etc/nginx/conf.d
 
-EXPOSE 12306
+EXPOSE 12301

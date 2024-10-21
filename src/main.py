@@ -65,7 +65,7 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host=IP,
-        port=12305,
+        port=12300,
         # host=server_ip,
         # port=server_port
     )

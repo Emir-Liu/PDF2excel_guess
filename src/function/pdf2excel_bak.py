@@ -216,8 +216,6 @@ def get_style_content(
     mid_pos_info_list, order_number, page, page_width, size_columns_set
 ) -> List[dict]:
 
-    bool_find_all = True
-
     style_info_list = []
     for tmp_mid_pos_info in mid_pos_info_list:
         tmp_style_info = {
@@ -281,43 +279,41 @@ def get_style_content(
 
         print(f"size_info_list:{size_info_list}")
 
-        if size_info_list:
-            tmp_style_info["总数"] = size_info_list[-1][1]
-            tmp_style_info["尺寸"] = size_info_list
+        tmp_style_info["总数"] = size_info_list[-1][1]
+        tmp_style_info["尺寸"] = size_info_list
 
-            tmp_size_columns = size_info_list[0][1:]
-            for tmp_tmp_size_columns in tmp_size_columns:
-                size_columns_set.add(tmp_tmp_size_columns)
+        tmp_size_columns = size_info_list[0][1:]
+        for tmp_tmp_size_columns in tmp_size_columns:
+            size_columns_set.add(tmp_tmp_size_columns)
 
-            len_first_row = len(size_info_list[0])
-            # print(f"len_first_row:{len_first_row}")
+        len_first_row = len(size_info_list[0])
+        # print(f"len_first_row:{len_first_row}")
 
-            first_row = size_info_list[0]
-            for row_idx, row in enumerate(size_info_list):
-                # print(f"row_idx:{row_idx} row:{row}")
-                if row_idx == 0:
-                    continue
-                elif row_idx == len(size_info_list) - 1:
-                    continue
-                if len(row) > len_first_row:
-                    # include 内裤长
-                    new_size = row[0]
-                    tmp_style_info["色号"] += f"--内长{new_size}英寸"
-                    start_pos = 2
-                    # size = [fr + f"/{new_size}" for fr in first_row[1:]]
-                    size = first_row[1:]
-                else:
-                    start_pos = 1
-                    size = first_row[1:]
-                for tmp_size_idx, tmp_size in enumerate(size):
-                    tmp_style_info[tmp_size] = row[start_pos + tmp_size_idx]
+        first_row = size_info_list[0]
+        for row_idx, row in enumerate(size_info_list):
+            # print(f"row_idx:{row_idx} row:{row}")
+            if row_idx == 0:
+                continue
+            elif row_idx == len(size_info_list) - 1:
+                continue
+            if len(row) > len_first_row:
+                # include 内裤长
+                new_size = row[0]
+                tmp_style_info["色号"] += f"--内长{new_size}英寸"
+                start_pos = 2
+                # size = [fr + f"/{new_size}" for fr in first_row[1:]]
+                size = first_row[1:]
+            else:
+                start_pos = 1
+                size = first_row[1:]
+            for tmp_size_idx, tmp_size in enumerate(size):
+                tmp_style_info[tmp_size] = row[start_pos + tmp_size_idx]
             # tmp_style_info[""]
-        else:
-            bool_find_all = False
+
         # print(f"tmp_style_info:{tmp_style_info}")
         style_info_list.append(tmp_style_info)
         # get style code and others
-    return style_info_list, size_columns_set, bool_find_all
+    return style_info_list, size_columns_set
 
 
 def clean_annot_in_doc(doc):
@@ -470,16 +466,7 @@ def get_target_country(page, up_target_country, down_target_country, page_width)
     return target_country
 
 
-def func_pdf2excel(pdf_content, size_columns_set=set()):
-    """transform pdf to excel
-
-    Args:
-        pdf_content (Union[str, bytes]): file path or bytes
-        size_columns_set (set, optional): the set of size columns. Defaults to set().
-
-    Returns:
-        _type_: _description_
-    """
+def func_pdf2excel(pdf_content, size_columns_set):
     # convert reading local file into reading data stream,
     # avoiding the need to save the file locally
 
@@ -510,108 +497,21 @@ def func_pdf2excel(pdf_content, size_columns_set=set()):
     order_number = f"{order_number.strip()}-{target_country.strip()}-{cll.strip()}"
     total_style_info_list = []
 
-    bool_find_all = True
     for page in doc:
-
         # find struct by tables
         tables = page.find_tables()
         num_table = 0
-        table_list = []
         for table in tables:
             num_table += 1
-            table_list.append(table)
         page_width = page.rect[2]
         page_height = page.rect[3]
 
-        # find table on next page
-        if bool_find_all is False:
-            pre_info = {}
-            if num_table >= 2:
-                cell_table0_0_0 = get_cell_content_in_table(
-                    page=page, table=tables[0], num_row=0, num_cell=0
-                )
-                cell_table1_0_0 = get_cell_content_in_table(
-                    page=page,
-                    table=tables[1],
-                    num_row=0,
-                    num_cell=0,
-                )
-                if "Order Number" in cell_table0_0_0 and "Line" in cell_table1_0_0:
-                    order_up_y, order_down_y = get_table_pos(table=tables[0])
-                    line_up_y, line_down_y = get_table_pos(table=tables[1])
-
-                    block_list = get_row_content_block(
-                        page=page,
-                        up_y=order_down_y,
-                        down_y=line_up_y,
-                        page_width=page_width,
-                    )
-
-                    size_info_list = []
-                    bool_start = False
-                    for tmp_block_content in block_list:
-                        if "Total" in tmp_block_content:
-                            bool_start = not bool_start
-                        tmp_size_info = tmp_block_content.split(" ")
-                        # tmp_size_info_int = [int(val) for val in tmp_size_info]
-                        tmp_size_info_int = []
-
-                        for val in tmp_size_info:
-                            try:
-                                tmp_val = int(val)
-                            except Exception as e:
-                                tmp_val = val
-                            tmp_size_info_int.append(tmp_val)
-                        if bool_start is True:
-                            size_info_list.append(tmp_size_info_int)
-                        if len(size_info_list) and bool_start is False:
-                            size_info_list.append(tmp_size_info_int)
-                            break
-
-                    print(f"size_info_list:{size_info_list}")
-
-                    if size_info_list:
-                        pre_info["总数"] = size_info_list[-1][1]
-                        pre_info["尺寸"] = size_info_list
-
-                        tmp_size_columns = size_info_list[0][1:]
-                        for tmp_tmp_size_columns in tmp_size_columns:
-                            size_columns_set.add(tmp_tmp_size_columns)
-
-                        len_first_row = len(size_info_list[0])
-                        # print(f"len_first_row:{len_first_row}")
-
-                        first_row = size_info_list[0]
-                        for row_idx, row in enumerate(size_info_list):
-                            # print(f"row_idx:{row_idx} row:{row}")
-                            if row_idx == 0:
-                                continue
-                            elif row_idx == len(size_info_list) - 1:
-                                continue
-                            if len(row) > len_first_row:
-                                # include 内裤长
-                                new_size = row[0]
-                                # tmp_style_info["色号"] += f"--内长{new_size}英寸"
-                                pre_info["内长"] = new_size
-                                start_pos = 2
-                                # size = [fr + f"/{new_size}" for fr in first_row[1:]]
-                                size = first_row[1:]
-                            else:
-                                start_pos = 1
-                                size = first_row[1:]
-                            for tmp_size_idx, tmp_size in enumerate(size):
-                                pre_info[tmp_size] = row[start_pos + tmp_size_idx]
-
-                        if "内长" in pre_info:
-                            total_style_info_list[-1]["色号"] += f"--内长{new_size}英寸"
-                            del pre_info["内长"]
-                        total_style_info_list[-1].update(pre_info)
         mid_pos_info_list = get_style_pos_y_info_list(
             page=page, tables=tables, page_height=page_height
         )
         # print(f"len mid_pos_info_list:{len(mid_pos_info_list)}")
 
-        style_info_list, size_columns_set, bool_find_all = get_style_content(
+        style_info_list, size_columns_set = get_style_content(
             mid_pos_info_list=mid_pos_info_list,
             order_number=order_number,
             page=page,
@@ -620,78 +520,53 @@ def func_pdf2excel(pdf_content, size_columns_set=set()):
         )
         total_style_info_list.extend(style_info_list)
 
-    if isinstance(pdf_content, str):
-        # save file
-        df = pd.DataFrame(total_style_info_list)
-        df.to_excel("./a.xlsx")
-
     # translate json to excel file
     return total_style_info_list, size_columns_set
-
-
-def mark_pdf(input_path: str, output_path: str = "./", level: str = ""):
-    """mark PDF content with rectangle
-
-    Args:
-        input_path (str): input file path
-        output_path (str, optional): output file folder path. Defaults to "./".
-        level (str, optional): mark content tags, include block, line, span, table, cell. Defaults to "".
-    """
-    doc = pymupdf.open(input_path)
-
-    for page in doc:
-        page_content = page.get_text(option="dict")
-
-        # print("get page content")
-        # content_list = []
-        for block in page_content["blocks"]:
-            # tmp_block_content_list = []
-            # tmp_block_content = ""
-            if level == "block":
-                page.draw_rect(pymupdf.Rect(block["bbox"]), color=(1, 0, 0))
-
-            if "lines" in block:
-                for line in block["lines"]:
-                    if level == "line":
-                        page.draw_rect(pymupdf.Rect(line["bbox"]))
-                    for span in line["spans"]:
-                        if level == "span":
-                            page.draw_rect(pymupdf.Rect(span["bbox"]))
-                        # tmp_block_content += span["text"]
-                        # tmp_block_content_list.append(span["text"])
-                        # pass
-                # tmp_block_content = " ".join(tmp_block_content_list)
-                # print(f"tmp_block_content:{tmp_block_content}")
-                # while "  " in tmp_block_content:
-                #     tmp_block_content.replace("  ", " ")
-                # while True:
-                #     if "  " in tmp_block_content:
-                #         tmp_block_content = tmp_block_content.replace("  ", " ")
-                #     else:
-                #         break
-            # content_list.append(tmp_block_content)
-
-        if level in ["table", "cell"]:
-            tables = page.find_tables()
-            print("get tables")
-
-            if level == "cell":
-                for table in tables.tables:
-                    for cell in table.cells:
-                        table.page.draw_rect(cell, color=(1, 0, 0))
-
-            if level == "table":
-                for table in tables.tables:
-                    table.page.draw_rect(table.bbox, color=(0, 1, 0))
-    # doc.save("block.pdf")
-
-    doc.save(f"{output_path}/{level}.pdf")
 
 
 if __name__ == "__main__":
     # ORG_PDF_PATH = "D:/projects/pdf2excel/pdf2excel_GUESS/others/sample_file/Order_EU_03_MA01-2024-02483_202406060132090609.pdf"
     # ORG_PDF_PATH = "D:/projects/pdf2excel/pdf2excel_GUESS/others/sample_file/Order_EU_03_MA03-2024-03573_202409061447208210.pdf"
     ORG_PDF_PATH = "C:/Users/liuyiming/Downloads/OCR1010/error/Order_EU_03_MA01-2024-04031_202409061439279596.pdf"
+    # ORG_PDF_PATH = "C:/Users/liuyiming/Downloads/TAO AI画册.pdf"
+    doc = pymupdf.open(ORG_PDF_PATH)
 
-    # mark_pdf(input_path=ORG_PDF_PATH, output_path="./error", level="span")
-    total_style_info_list, size_columns_set = func_pdf2excel(pdf_content=ORG_PDF_PATH)
+    for page in doc:
+        page_content = page.get_text(option="dict")
+
+        # print("get page content")
+        content_list = []
+        for block in page_content["blocks"]:
+            tmp_block_content_list = []
+            # tmp_block_content = ""
+            page.draw_rect(pymupdf.Rect(block["bbox"]), color=(1, 0, 0))
+
+            if "lines" in block:
+                for line in block["lines"]:
+                    # page.draw_rect(pymupdf.Rect(line["bbox"]))
+                    for span in line["spans"]:
+                        # page.draw_rect(pymupdf.Rect(span["bbox"]))
+                        # tmp_block_content += span["text"]
+                        tmp_block_content_list.append(span["text"])
+                        # pass
+                tmp_block_content = " ".join(tmp_block_content_list)
+                print(f"tmp_block_content:{tmp_block_content}")
+                # while "  " in tmp_block_content:
+                #     tmp_block_content.replace("  ", " ")
+                while True:
+                    if "  " in tmp_block_content:
+                        tmp_block_content = tmp_block_content.replace("  ", " ")
+                    else:
+                        break
+            content_list.append(tmp_block_content)
+
+        # tables = page.find_tables()
+        # print("get tables")
+
+        # # for table in tables.tables:
+        # #     for cell in table.cells:
+        # #         table.page.draw_rect(cell, color=(1, 0, 0))
+
+        # for table in tables.tables:
+        #     table.page.draw_rect(table.bbox, color=(0, 1, 0))
+    doc.save("block.pdf")
